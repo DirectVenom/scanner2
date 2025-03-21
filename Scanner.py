@@ -43,3 +43,25 @@ class WebSecurityScanner:
         
         except Exception as e:
             print(f"Error Crawling {url}: {str(e)}")
+    
+
+    # SQL Injection Detection Check
+    def check_sql_injection(self, url: str) -> None:
+        sql_payloads = ["'", "1' OR '1'='1", "' OR 1=1--", "' UNION SELECT NULL--"]
+        for payload in sql_payloads:
+            try:
+                Parsed = urllib.pasrse.urlparse(url)
+                params = urllib.parse_qs(parsed_query)
+
+                for param in params:
+                    test_url = url.replace(f"{param}={params[param][0]}", f"{param}={payload}")
+                    response = self.session.get(test_url)
+
+                    #Looking for SQL error messages
+                    if any(error in response.text.lower() for error in ['sql', 'mysql', 'sqlite', 'postgresql', 'oracle']):
+                        self.report_vulnerability({
+                            'type': 'SQL Injection',
+                            'url': url,
+                            'parameter': param,
+                            'payload': payload
+                        })
