@@ -131,3 +131,4 @@ if __name__ == "__main__":
     print(f"\n{colorama.Fore.GREEN}Scan Complete!{colorama.Style.RESET_ALL}")
     print(f"Total URLs scanned: {len(scanner.visited_urls)}")
     print(f"Vulnerabilities found: {len(vulnerabilities)}")
+ 

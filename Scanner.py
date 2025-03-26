@@ -187,6 +187,7 @@ def generate_report(self):
         target_url = sys.argv[1]
         scanner = WebSecurityScanner(target_url)
         vulnerabilites = scanner.scan()
+        scanner.generate_report()
 
 
         print(f"\n{colorama.Fore.GREEN}Scan Complete!{colorama.Style.RESET_ALL}")
