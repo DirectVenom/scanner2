@@ -6,6 +6,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 import sys
 from typing import List, Dict, Set
+from jinja2 import Template
+import pdfkit
+import argparse
 
 class WebSecurityScanner:
     def __init__(self, target_url: str, max_depth: int = 3):
@@ -97,6 +100,63 @@ class WebSecurityScanner:
             except Exception as e:
                 print(f"Error testing XSS on {url}: {str(e)}")
 
+    def check_directory_traversal(self, url: str) -> None:
+        #Check for Directory Traversal vulnerabilities.
+        traversal_payloads = ["../../../../etc/passwd", "..\\..\\..\\..\\windows\\win.ini"]
+
+        for payload in traversal_payloads:
+            try:
+                test_url = url + payload
+                response = self.session.get(test_url, timeout=5)
+
+                if "root:x:" in response.text or "[fonts]" in response.text:
+                    self.report_vulnerability({
+                        'type': 'Directory Traversal',
+                        'url': test_url,
+                        'payload': payload
+                    })
+            except requests.RequestException as e:
+                print(f"Error testing Directory Traversal on {url}: {str(e)}")
+
+    from jinja2 import Template
+import pdfkit
+
+def generate_report(self):
+    """Generate an HTML & PDF report of vulnerabilities."""
+    template = Template("""
+    <html>
+    <head><title>Security Scan Report</title></head>
+    <body>
+        <h1>Security Scan Report</h1>
+        <p>Scanned URL: {{ target_url }}</p>
+        <p>Total URLs Scanned: {{ total_urls }}</p>
+        <p>Vulnerabilities Found: {{ vulnerabilities | length }}</p>
+        <hr>
+        <h2>Vulnerability Details</h2>
+        <ul>
+        {% for vuln in vulnerabilities %}
+            <li><b>Type:</b> {{ vuln.type }} <br>
+                <b>URL:</b> {{ vuln.url }} <br>
+                <b>Description:</b> {{ vuln.get('description', '') }} <br>
+                <b>Payload:</b> {{ vuln.get('payload', '') }}
+            </li>
+        {% endfor %}
+        </ul>
+    </body>
+    </html>
+    """)
+
+    report_html = template.render(target_url=self.target_url,
+                                  total_urls=len(self.visited_urls),
+                                  vulnerabilities=self.vulnerabilities)
+
+    with open("scan_report.html", "w") as file:
+        file.write(report_html)
+
+    # Convert HTML to PDF
+    pdfkit.from_file("scan_report.html", "scan_report.pdf")
+
+
     # Main scanner logic 
     def scan(self) -> List[Dict]:
         print(f"\n{colorama,Fore.BLUE} {self.target_url}{colorama.style.RESET_ALL}\n")
@@ -106,6 +166,8 @@ class WebSecurityScanner:
             for url in self.visited_urls:
                 excutor.submit(self.check_sql_injection, url)
                 excutor.submit(self.check_xss, url)
+                excutor.submit(self.check_directory_traversal, url)
+                
 
             
         return self.vulnerabilities
