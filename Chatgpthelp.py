@@ -3,132 +3,115 @@ from bs4 import BeautifulSoup
 import urllib.parse
 import colorama
 import re
+import json
 from concurrent.futures import ThreadPoolExecutor
 import sys
 from typing import List, Dict, Set
+import pdfkit
+import os
 
-class WebSecurityScanner:
+class WordPressSecurityScanner:
     def __init__(self, target_url: str, max_depth: int = 3):
-        """
-        Initialize the security scanner with a target URL and maximum crawl depth.
-
-        Args:
-            target_url: The base URL to scan
-            max_depth: Maximum depth for crawling links (default: 3)
-        """
         self.target_url = target_url
         self.max_depth = max_depth
         self.vulnerabilities: List[Dict] = []
         self.visited_urls: Set[str] = set()
         self.session = requests.Session()
-
-        # Initialize colorama for colored output
         colorama.init()
 
-    def crawl(self, url: str, depth: int = 0) -> None:
-        """Recursively crawl the website to discover links."""
+    def crawl(self, url: str, depth: int = 0):
         if depth > self.max_depth or url in self.visited_urls:
             return
-        
         try:
             self.visited_urls.add(url)
             response = self.session.get(url, verify=False, timeout=5)
             soup = BeautifulSoup(response.text, 'html.parser')
-
+            
             links = soup.find_all('a', href=True)
             for link in links:
                 next_url = urllib.parse.urljoin(url, link['href'])
-                if next_url.startswith(self.target_url) and next_url not in self.visited_urls:
+                if next_url.startswith(self.target_url):
                     self.crawl(next_url, depth + 1)
-
-        except requests.RequestException as e:
+        except Exception as e:
             print(f"Error Crawling {url}: {str(e)}")
 
-    def check_sql_injection(self, url: str) -> None:
-        """Test for SQL Injection vulnerabilities."""
-        sql_payloads = ["'", "1' OR '1'='1", "' OR 1=1--", "' UNION SELECT NULL--"]
-
+    def detect_wordpress_plugins(self, url: str):
         try:
-            parsed = urllib.parse.urlparse(url)
-            params = urllib.parse.parse_qs(parsed.query)
+            response = self.session.get(url, verify=False, timeout=5)
+            plugins = re.findall(r'/wp-content/plugins/([a-zA-Z0-9-_]+)/', response.text)
+            unique_plugins = set(plugins)
+            for plugin in unique_plugins:
+                self.check_plugin_vulnerabilities(plugin)
+        except Exception as e:
+            print(f"Error detecting plugins: {str(e)}")
 
-            for param in params:
-                for payload in sql_payloads:
-                    test_url = url.replace(f"{param}={params[param][0]}", f"{param}={payload}")
-                    response = self.session.get(test_url, timeout=5)
-
-                    if any(error in response.text.lower() for error in ['sql', 'mysql', 'sqlite', 'postgresql', 'oracle']):
-                        self.report_vulnerability({
-                            'type': 'SQL Injection',
-                            'url': url,
-                            'parameter': param,
-                            'payload': payload
-                        })
-                        return
-
-        except requests.RequestException as e:
-            print(f"Error testing SQL injection on {url}: {str(e)}")
-
-    def check_xss(self, url: str) -> None:
-        """Test for Cross-Site Scripting (XSS) vulnerabilities."""
-        xss_payloads = [
-            "<script>alert('XSS')</script>",
-            "<img src=x onerror=alert('XSS')>",
-            "javascript:alert('XSS')"
-        ]
-
+    def check_plugin_vulnerabilities(self, plugin_name: str):
         try:
-            parsed = urllib.parse.urlparse(url)
-            params = urllib.parse.parse_qs(parsed.query)
+            with open("wordpress_vuln_db.json", "r") as file:
+                vuln_db = json.load(file)
+            
+            if plugin_name in vuln_db:
+                self.vulnerabilities.append({
+                    'type': 'Plugin Vulnerability',
+                    'plugin': plugin_name,
+                    'description': vuln_db[plugin_name]
+                })
+                print(f"{colorama.Fore.RED}[PLUGIN VULNERABILITY FOUND]{colorama.Style.RESET_ALL}: {plugin_name}")
+        except Exception as e:
+            print(f"Error checking plugin vulnerabilities: {str(e)}")
 
-            for param in params:
-                for payload in xss_payloads:
-                    test_url = url.replace(f"{param}={params[param][0]}", f"{param}={urllib.parse.quote(payload)}")
-                    response = self.session.get(test_url, timeout=5)
+    def check_sql_injection(self, url: str):
+        sql_payloads = ["'", "1' OR '1'='1", "' OR 1=1--"]
+        for payload in sql_payloads:
+            try:
+                test_url = f"{url}?id={payload}"
+                response = self.session.get(test_url)
+                if "SQL" in response.text or "mysql" in response.text:
+                    self.vulnerabilities.append({'type': 'SQL Injection', 'url': url, 'payload': payload})
+            except Exception as e:
+                print(f"Error testing SQL Injection: {str(e)}")
 
-                    if payload in response.text:
-                        self.report_vulnerability({
-                            'type': 'Cross-Site Scripting (XSS)',
-                            'url': url,
-                            'parameter': param,
-                            'payload': payload
-                        })
-                        return
+    def generate_report(self):
+        html_content = f"""
+        <html>
+        <head><title>WordPress Security Scan Report</title></head>
+        <body>
+            <h1>Security Scan Report</h1>
+            <p>Scanned URL: {self.target_url}</p>
+            <p>Total URLs Scanned: {len(self.visited_urls)}</p>
+            <p>Vulnerabilities Found: {len(self.vulnerabilities)}</p>
+            <h2>Details</h2>
+            <ul>
+        """
+        
+        for vuln in self.vulnerabilities:
+            html_content += f"""
+            <li><b>Type:</b> {vuln['type']}<br>
+                <b>Details:</b> {vuln.get('description', vuln.get('plugin', vuln.get('url', '')))}<br>
+                <b>Payload:</b> {vuln.get('payload', '')}
+            </li>
+            """
+        
+        html_content += "</ul></body></html>"
+        with open("scan_report.html", "w") as file:
+            file.write(html_content)
+        pdfkit.from_file("scan_report.html", "scan_report.pdf")
 
-        except requests.RequestException as e:
-            print(f"Error testing XSS on {url}: {str(e)}")
-
-    def scan(self) -> List[Dict]:
-        """Main function to start scanning."""
-        print(f"\n{colorama.Fore.BLUE}Scanning {self.target_url}...{colorama.Style.RESET_ALL}\n")
-
-        self.crawl(self.target_url)  # Crawling the website
-
+    def scan(self):
+        print(f"\nScanning {self.target_url}...\n")
+        self.crawl(self.target_url)
         with ThreadPoolExecutor(max_workers=5) as executor:
             for url in self.visited_urls:
+                executor.submit(self.detect_wordpress_plugins, url)
                 executor.submit(self.check_sql_injection, url)
-                executor.submit(self.check_xss, url)
-
-        return self.vulnerabilities
-
-    def report_vulnerability(self, vulnerability: Dict) -> None:
-        """Log and print discovered vulnerabilities."""
-        self.vulnerabilities.append(vulnerability)
-        print(f"{colorama.Fore.RED}[VULNERABILITY FOUND]{colorama.Style.RESET_ALL}")
-        for key, value in vulnerability.items():
-            print(f"{key}: {value}")
-        print()
+        self.generate_report()
+        print(f"\nScan Complete! {len(self.vulnerabilities)} vulnerabilities found.")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python scanner.py <target_url>")
         sys.exit(1)
-
+    
     target_url = sys.argv[1]
-    scanner = WebSecurityScanner(target_url)
-    vulnerabilities = scanner.scan()
-
-    print(f"\n{colorama.Fore.GREEN}Scan Complete!{colorama.Style.RESET_ALL}")
-    print(f"Total URLs scanned: {len(scanner.visited_urls)}")
-    print(f"Vulnerabilities found: {len(vulnerabilities)}")
- 
+    scanner = WordPressSecurityScanner(target_url)
+    scanner.scan()
