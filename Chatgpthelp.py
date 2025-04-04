@@ -10,6 +10,10 @@ from typing import List, Dict, Set
 import pdfkit
 import os
 
+# WPScan API Configuration
+WPSCAN_API_TOKEN = 'your_api_token_here'  # Replace this with your actual API token
+WPSCAN_API_URL = 'https://wpvulndb.com/api/v3/'
+
 class WordPressSecurityScanner:
     def __init__(self, target_url: str, max_depth: int = 3):
         self.target_url = target_url
@@ -46,19 +50,39 @@ class WordPressSecurityScanner:
             print(f"Error detecting plugins: {str(e)}")
 
     def check_plugin_vulnerabilities(self, plugin_name: str):
+        # Query WPScan API to check for vulnerabilities in the plugin
         try:
-            with open("wordpress_vuln_db.json", "r") as file:
-                vuln_db = json.load(file)
-            
-            if plugin_name in vuln_db:
+            plugin_info = self.get_plugin_info_from_wpscan(plugin_name)
+            if plugin_info:
                 self.vulnerabilities.append({
                     'type': 'Plugin Vulnerability',
                     'plugin': plugin_name,
-                    'description': vuln_db[plugin_name]
+                    'description': plugin_info['description'],
+                    'url': plugin_info['url']
                 })
                 print(f"{colorama.Fore.RED}[PLUGIN VULNERABILITY FOUND]{colorama.Style.RESET_ALL}: {plugin_name}")
         except Exception as e:
             print(f"Error checking plugin vulnerabilities: {str(e)}")
+
+    def get_plugin_info_from_wpscan(self, plugin_name: str):
+        # Construct URL for WPScan API request
+        url = f"{WPSCAN_API_URL}themes/{plugin_name}"
+        headers = {
+            "Authorization": f"Token token={WPSCAN_API_TOKEN}"
+        }
+        response = self.session.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # If we find the plugin, return the details
+            if data.get("vulnerabilities"):
+                vulnerabilities = data["vulnerabilities"]
+                latest_vulnerability = vulnerabilities[0]  # Get the most recent vulnerability
+                return {
+                    'description': latest_vulnerability.get('title', 'No description available'),
+                    'url': latest_vulnerability.get('url', 'No URL available')
+                }
+        return None
 
     def check_sql_injection(self, url: str):
         sql_payloads = ["'", "1' OR '1'='1", "' OR 1=1--"]
