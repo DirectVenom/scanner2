@@ -11,7 +11,7 @@ import pdfkit
 import os
 
 # WPScan API Configuration
-WPSCAN_API_TOKEN = 'your_api_token_here'  # Replace this with your actual API token
+WPSCAN_API_TOKEN = 'your_api_token_here'  
 WPSCAN_API_URL = 'https://wpvulndb.com/api/v3/'
 
 class WordPressSecurityScanner:
@@ -83,6 +83,44 @@ class WordPressSecurityScanner:
                     'url': latest_vulnerability.get('url', 'No URL available')
                 }
         return None
+    
+    def dynamic_analysis(self, url: str):
+        """
+        Performs dynamic analysis by testing discovered URLs and plugin endpoints
+        for runtime vulnerabilities such as SQL injection and insecure endpoints.
+        """
+        try:
+            # First Layer: General SQL Injection testing
+            sql_payloads = ["'", "' OR '1'='1", "'; DROP TABLE users; --"]
+            for payload in sql_payloads:
+                test_url = f"{url}?test={payload}"
+                response = self.session.get(test_url, verify=False, timeout=5)
+                if any(error in response.text.lower() for error in ["sql", "mysql", "syntax error", "warning", "unclosed quotation"]):
+                    self.vulnerabilities.append({
+                        'type': 'SQL Injection (Dynamic)',
+                        'url': test_url,
+                        'payload': payload
+                    })
+                    print(f"{colorama.Fore.RED}[DYNAMIC SQL VULNERABILITY]{colorama.Style.RESET_ALL}: {test_url}")
+
+            # Second Layer: Plugin endpoint testing
+            plugin_endpoints = [
+                "/wp-admin/admin-ajax.php",
+                "/wp-json/wp/v2/",
+                "/wp-content/plugins/",
+            ]
+            for endpoint in plugin_endpoints:
+                full_url = urllib.parse.urljoin(self.target_url, endpoint)
+                response = self.session.get(full_url, verify=False, timeout=5)
+                if response.status_code == 200 and "error" in response.text.lower():
+                    self.vulnerabilities.append({
+                        'type': 'Potential Insecure Plugin Endpoint',
+                        'url': full_url
+                    })
+                    print(f"{colorama.Fore.YELLOW}[PLUGIN ENDPOINT WARNING]{colorama.Style.RESET_ALL}: {full_url}")
+        except Exception as e:
+            print(f"Error during dynamic analysis of {url}: {str(e)}")
+
 
     def check_sql_injection(self, url: str):
         sql_payloads = ["'", "1' OR '1'='1", "' OR 1=1--"]
@@ -128,6 +166,7 @@ class WordPressSecurityScanner:
             for url in self.visited_urls:
                 executor.submit(self.detect_wordpress_plugins, url)
                 executor.submit(self.check_sql_injection, url)
+                executor.submit(self.dynamic_analysis, url)
         self.generate_report()
         print(f"\nScan Complete! {len(self.vulnerabilities)} vulnerabilities found.")
 
